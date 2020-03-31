@@ -1,0 +1,143 @@
+---
+title: "Social network analysis demo"
+author: "Adrienne Wood"
+date: "03/27/2020"
+
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+---
+
+```{r set defaults,include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+```
+
+```{r load libraries,include=FALSE}
+if(!require(pacman)) install.packages("pacman"); require(pacman)
+p_load(igraph, RColorBrewer,lmSupport,knitr,DT)
+```
+
+
+# Social network of the class Wiki
+
+### Load data...
+
+```{r load data}
+# read in the social network edges file
+edges <-read.csv("wiki_edges.csv")
+kable(edges, caption="All Wiki connections")
+
+```
+
+### Create an igraph network from the edges dataframe. 
+"Directed" means we want to preserve information about whether a link was incoming or outgoing
+
+```{r create network}
+net <-graph_from_data_frame(edges,directed=T)
+
+# modify a few properties of graph
+E(net)$arrow.size <- 0.2
+E(net)$width <- 0.5
+
+```
+
+## Graph the Wiki network
+```{r graph}
+
+# pick the network layout algorithm we'll use
+coords <- layout.kamada.kawai(net)
+
+# make a function to scale the vertex sizes
+scalevals <- function(v, a, b) {v <- v-min(v) 
+                                v <- v/max(v) 
+                                v <- v * (b-a) 
+                                v+a }
+
+# set min and max node sizes
+min_size_node = 4
+max_size_node = 8
+
+# scale node size according to node strength (weighted degree centrality)
+nodesize_strength = scalevals(strength(net), min_size_node, max_size_node)
+
+# plot
+myPlot<-plot.igraph(net,
+    vertex.size = nodesize_strength,
+     edge.color="#00000088",
+
+     edge.curved=.2,
+    layout = coords)
+
+
+
+```
+
+## Graph the Wiki network without the Home vertex; detect communities 
+```{r without home}
+
+netNoHomeD <-delete_vertices(net, "Home")
+netNoHome <- as.undirected(netNoHomeD, mode = c("collapse"))
+# scale node size according to node strength (weighted degree centrality)
+min_size_node=4
+max_size_node=8
+nodesize_strength = scalevals(strength(netNoHome), min_size_node, max_size_node)
+
+coords <- layout.fruchterman.reingold(netNoHome)
+
+#### identify communities of topics ####
+
+# implement fast greedy modularity optimization algorithm 
+# to find community structure
+communities <- cluster_fast_greedy(netNoHome)
+
+# assign community membership as vertex attribute 
+V(netNoHome)$community <- communities$membership
+commnunity_pal <- brewer.pal(max(V(netNoHome)$community),"Set3")
+
+# plot, coloring nodes by community membership
+
+plot.igraph(netNoHome,
+    vertex.size = nodesize_strength,
+    vertex.color = commnunity_pal[V(netNoHome)$community],
+    edge.color="#00000088",
+    edge.curved=.2,
+    layout = coords)
+
+
+```
+
+
+# Describe the topics' network positions
+```{r network descriptives}
+
+indegreeCentrality<-igraph::degree(netNoHomeD,mode="in")
+outdegreeCentrality<-igraph::degree(netNoHomeD,mode="out")
+eigenvectorCentrality <- igraph::eigen_centrality(netNoHomeD,directed=T)$vector
+betweennessCentrality <- igraph::betweenness(netNoHomeD, directed=T)
+clusteringCoefficient <- igraph::transitivity(netNoHomeD,type="local",isolates="zero")
+pagerank <- igraph::page_rank(netNoHomeD,directed=T)$vector
+constraint <- igraph::constraint(netNoHomeD)
+    
+allScores <-cbind(indegreeCentrality,outdegreeCentrality,eigenvectorCentrality,betweennessCentrality,clusteringCoefficient,pagerank,constraint)
+allScoresD <-data.frame(allScores)
+allScoresD$topic <-rownames(allScoresD)
+DT::datatable(allScoresD,caption="Network variables")
+```
+
+# Correlations between network variables
+```{r correlations}
+DT::datatable(cor(allScoresD[,1:7]),caption="Correlations")
+```
+
+# Communities
+```{r communities}
+# combine with communities info
+commdf <-data.frame(topic=communities$names,community=communities$membership)
+
+allScores <- join(allScoresD,commdf,by=c("topic"))
+kable(communities[1:22])
+
+```
